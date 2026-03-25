@@ -51,6 +51,56 @@ workmux add feature/task -P task.md --prompt-file-only
 
 Your editor can then detect the prompt file on startup and pass it to its embedded agent. Set `prompt_file_only: true` in `.workmux.yaml` to make this the default.
 
+## Agent profiles
+
+Define named agent profiles to create aliases for agents you use frequently or to configure multiple instances of the same agent:
+
+```yaml
+# ~/.config/workmux/config.yaml
+agents:
+  cc-work:
+    command: claude
+    type: claude
+  cc-personal:
+    command: ~/.local/bin/claude-personal
+    type: claude
+  cod:
+    command: codex
+    type: codex
+```
+
+Each profile has:
+
+- **alias** (map key): short name used with `-a` or in pane commands
+- **command**: the executable to run
+- **type**: which built-in agent to inherit behavior from (`claude`, `gemini`, `codex`, `opencode`, `kiro-cli`, `vibe`, `pi`)
+
+Use profiles anywhere you'd use an agent name:
+
+```bash
+# CLI
+workmux add feature/auth -a cc-work -p "Implement OAuth"
+
+# In .workmux.yaml
+agent: cc-work
+```
+
+Profiles can also be used in pane configuration with the `agent` field:
+
+```yaml
+panes:
+  - agent: cc-work
+    focus: true
+  - agent: cod
+    split: vertical
+```
+
+The `agent` field is mutually exclusive with `command` — use one or the other. The `agent` field resolves through the profiles map; `command` is always a literal shell command.
+
+Profiles inherit all behavior from their `type` — prompt injection format, continue/resume flags, skip-permissions flags, and auto-name commands all work automatically.
+
+Profiles can be defined in both global config (`~/.config/workmux/config.yaml`) and project config (`.workmux.yaml`). Project entries override global entries with the same alias. Bare agent names like `claude` continue to work without defining a profile.
+
 ## Per-pane agents
 
 workmux automatically recognizes built-in agent commands (`claude`, `gemini`, `codex`, `opencode`, `kiro-cli`, `vibe`, `pi`) in pane commands. This means prompt injection works without the `<agent>` placeholder or a matching `agent` config:

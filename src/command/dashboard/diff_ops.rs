@@ -518,6 +518,7 @@ impl DiffOps for App {
                 &diff.pane_id,
                 self.config.dashboard.commit(),
                 self.config.agent.as_deref(),
+                self.config.agent_type_override.as_deref(),
             );
         }
         self.close_diff();
@@ -541,6 +542,7 @@ impl DiffOps for App {
                 &diff.pane_id,
                 self.config.dashboard.merge(),
                 self.config.agent.as_deref(),
+                self.config.agent_type_override.as_deref(),
             );
         }
         self.close_diff();
@@ -561,6 +563,7 @@ impl DiffOps for App {
                 &agent.pane_id,
                 self.config.dashboard.commit(),
                 self.config.agent.as_deref(),
+                self.config.agent_type_override.as_deref(),
             );
         }
     }
@@ -580,6 +583,7 @@ impl DiffOps for App {
                 &agent.pane_id,
                 self.config.dashboard.merge(),
                 self.config.agent.as_deref(),
+                self.config.agent_type_override.as_deref(),
             );
         }
     }

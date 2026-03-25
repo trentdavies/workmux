@@ -206,7 +206,13 @@ pub trait Multiplexer: Send + Sync {
     }
 
     /// Send keys to an agent pane, with special handling for Claude's ! prefix
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()>;
+    fn send_keys_to_agent(
+        &self,
+        pane_id: &str,
+        command: &str,
+        agent: Option<&str>,
+        agent_type: Option<&str>,
+    ) -> Result<()>;
 
     /// Send a single key to a pane
     fn send_key(&self, pane_id: &str, key: &str) -> Result<()>;
@@ -290,12 +296,15 @@ pub trait Multiplexer: Send + Sync {
             }
 
             // Resolve command: handle <agent> placeholder and prompt injection
-            let adjusted_command = util::resolve_pane_command(
+            let adjusted_command = util::resolve_pane_command_with_aliases(
                 pane_config.command.as_deref(),
+                pane_config.agent.as_deref(),
                 options.run_commands,
                 options.prompt_file_path,
                 working_dir,
                 effective_agent,
+                config.agent_type_override.as_deref(),
+                &config.agents,
                 &shell,
             );
 
@@ -328,15 +337,18 @@ pub trait Multiplexer: Send + Sync {
                 handshake.wait()?;
 
                 // Detect if this is an agent pane for sandbox targeting
-                let is_agent_pane = pane_config.command.as_deref().is_some_and(|cmd| {
-                    cmd == "<agent>"
-                        || agent::is_known_agent(cmd)
-                        || effective_agent.is_some_and(|a| crate::config::is_agent_command(cmd, a))
-                });
+                let is_agent_pane = pane_config.agent.is_some()
+                    || pane_config.command.as_deref().is_some_and(|cmd| {
+                        cmd == "<agent>"
+                            || agent::is_known_agent(cmd)
+                            || effective_agent
+                                .is_some_and(|a| crate::config::is_agent_command(cmd, a))
+                    });
 
                 // Inject continue/resume flag for agent panes when requested
                 if options.continue_session && is_agent_pane {
-                    let profile = agent::resolve_profile(pane_agent);
+                    let profile =
+                        agent::resolve_profile(pane_agent, config.agent_type_override.as_deref());
                     if let Some(flag) = profile.continue_flag() {
                         resolved.command =
                             util::inject_skip_permissions_flag(&resolved.command, flag);
@@ -362,7 +374,10 @@ pub trait Multiplexer: Send + Sync {
                         // (sandbox provides the security boundary, so permission
                         // prompts are unnecessary and break autonomous workflow)
                         let command_to_wrap = if is_agent_pane {
-                            let profile = crate::multiplexer::agent::resolve_profile(pane_agent);
+                            let profile = crate::multiplexer::agent::resolve_profile(
+                                pane_agent,
+                                config.agent_type_override.as_deref(),
+                            );
                             if let Some(flag) = profile.skip_permissions_flag() {
                                 util::inject_skip_permissions_flag(&resolved.command, flag)
                             } else {
@@ -421,7 +436,8 @@ pub trait Multiplexer: Send + Sync {
 
                 // Set working status for agent panes with injected prompts
                 if resolved.prompt_injected
-                    && agent::resolve_profile(pane_agent).needs_auto_status()
+                    && agent::resolve_profile(pane_agent, config.agent_type_override.as_deref())
+                        .needs_auto_status()
                 {
                     let icon = config.status_icons.working();
                     if config.status_format.unwrap_or(true) {

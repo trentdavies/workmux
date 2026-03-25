@@ -605,8 +605,15 @@ impl Multiplexer for TmuxBackend {
         self.tmux_cmd(&["send-keys", "-t", pane_id, "Enter"])
     }
 
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
-        if agent::resolve_profile(agent).needs_bang_delay() && command.starts_with('!') {
+    fn send_keys_to_agent(
+        &self,
+        pane_id: &str,
+        command: &str,
+        agent: Option<&str>,
+        agent_type: Option<&str>,
+    ) -> Result<()> {
+        if agent::resolve_profile(agent, agent_type).needs_bang_delay() && command.starts_with('!')
+        {
             // Send ! first
             self.tmux_cmd(&["send-keys", "-t", pane_id, "-l", "!"])?;
 

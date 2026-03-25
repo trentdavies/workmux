@@ -40,7 +40,12 @@ pub fn run(name: &str, text: Option<&str>, file: Option<&str>) -> Result<()> {
     if content.contains('\n') {
         mux.paste_multiline(&agent.pane_id, content)?;
     } else {
-        mux.send_keys_to_agent(&agent.pane_id, content, cfg.agent.as_deref())?;
+        mux.send_keys_to_agent(
+            &agent.pane_id,
+            content,
+            cfg.agent.as_deref(),
+            cfg.agent_type_override.as_deref(),
+        )?;
     }
 
     Ok(())

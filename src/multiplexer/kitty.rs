@@ -653,8 +653,15 @@ impl Multiplexer for KittyBackend {
         Ok(())
     }
 
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
-        if agent::resolve_profile(agent).needs_bang_delay() && command.starts_with('!') {
+    fn send_keys_to_agent(
+        &self,
+        pane_id: &str,
+        command: &str,
+        agent: Option<&str>,
+        agent_type: Option<&str>,
+    ) -> Result<()> {
+        if agent::resolve_profile(agent, agent_type).needs_bang_delay() && command.starts_with('!')
+        {
             // Send ! first
             self.kitten_cmd()
                 .args(&["send-text", "--match", &format!("id:{}", pane_id), "!"])

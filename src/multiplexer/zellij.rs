@@ -717,10 +717,16 @@ impl Multiplexer for ZellijBackend {
         Ok(())
     }
 
-    fn send_keys_to_agent(&self, pane_id: &str, command: &str, agent: Option<&str>) -> Result<()> {
+    fn send_keys_to_agent(
+        &self,
+        pane_id: &str,
+        command: &str,
+        agent: Option<&str>,
+        agent_type: Option<&str>,
+    ) -> Result<()> {
         use super::agent;
 
-        let profile = agent::resolve_profile(agent);
+        let profile = agent::resolve_profile(agent, agent_type);
 
         if profile.needs_bang_delay() && command.starts_with('!') {
             // Send ! first, wait, then rest of command

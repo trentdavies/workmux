@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,6 +48,16 @@ impl StatusIcons {
     pub fn done(&self) -> &str {
         self.done.as_deref().unwrap_or("✅")
     }
+}
+
+/// A user-defined agent profile that maps an alias to a command and built-in agent type.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AgentConfig {
+    /// The command/executable to run (e.g., "claude", "~/.local/bin/claude-personal")
+    pub command: String,
+    /// Which built-in agent type to inherit behavior from (e.g., "claude", "gemini", "codex")
+    #[serde(rename = "type")]
+    pub agent_type: String,
 }
 
 /// Configuration for LLM-based branch name generation
@@ -172,6 +183,18 @@ pub struct Config {
     #[serde(default)]
     pub agent: Option<String>,
 
+    /// User-defined agent profiles (alias → command + type)
+    #[serde(default)]
+    pub agents: BTreeMap<String, AgentConfig>,
+
+    /// Resolved agent type override (set internally during alias resolution, not from YAML)
+    #[serde(skip)]
+    pub agent_type_override: Option<String>,
+
+    /// Original agent alias name before resolution (for branch templates)
+    #[serde(skip)]
+    pub agent_alias: Option<String>,
+
     /// Default merge strategy for `workmux merge`
     #[serde(default)]
     pub merge_strategy: Option<MergeStrategy>,
@@ -233,13 +256,20 @@ pub struct Config {
 }
 
 /// Configuration for a single tmux pane
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct PaneConfig {
     /// A command to run when the pane is created. The pane will remain open
     /// with an interactive shell after the command completes. If not provided,
     /// the pane will start with the default shell.
+    /// Mutually exclusive with `agent`.
     #[serde(default)]
     pub command: Option<String>,
+
+    /// Agent name or alias to run in this pane. Resolved through user-defined
+    /// agent profiles (`agents` config map) or used as a literal agent command.
+    /// Mutually exclusive with `command`.
+    #[serde(default)]
+    pub agent: Option<String>,
 
     /// Whether this pane should receive focus after creation
     #[serde(default)]
@@ -1284,7 +1314,7 @@ impl Config {
             .unwrap_or_else(|| "claude".to_string());
 
         let mut config = global_config.merge(project_config);
-        config.agent = Some(final_agent);
+        Self::resolve_agent_alias(&mut config, final_agent);
 
         // After merging, apply sensible defaults for any values that are not configured.
         if let Ok(repo_root) = git::get_repo_root() {
@@ -1415,7 +1445,7 @@ impl Config {
             .unwrap_or_else(|| "claude".to_string());
 
         let mut config = global_config.merge(project_config);
-        config.agent = Some(final_agent);
+        Self::resolve_agent_alias(&mut config, final_agent);
 
         if !defaults_root.as_os_str().is_empty() {
             let has_node_modules = defaults_root.join("pnpm-lock.yaml").exists()
@@ -1448,6 +1478,50 @@ impl Config {
         config
     }
 
+    /// Resolve agent alias: if `agent_name` matches a user-defined profile in `config.agents`,
+    /// set `config.agent` to the resolved command, `config.agent_type_override` to the type,
+    /// and `config.agent_alias` to the original alias name. Otherwise, set `config.agent` directly.
+    fn resolve_agent_alias(config: &mut Self, agent_name: String) {
+        // Validate agent profile types
+        for (alias, agent_config) in &config.agents {
+            if !crate::multiplexer::agent::is_known_type(&agent_config.agent_type) {
+                tracing::warn!(
+                    "agents.{alias}: unknown type '{}', will use default profile behavior",
+                    agent_config.agent_type
+                );
+            }
+        }
+
+        // Resolve alias if the agent name matches a user-defined profile
+        if let Some(agent_config) = config.agents.get(&agent_name) {
+            config.agent_alias = Some(agent_name);
+            config.agent_type_override = Some(agent_config.agent_type.clone());
+            config.agent = Some(agent_config.command.clone());
+        } else {
+            config.agent = Some(agent_name);
+        }
+    }
+
+    /// Validate that no pane has both `command` and `agent` set.
+    fn validate_panes(config: &Self) -> anyhow::Result<()> {
+        let all_panes = config.panes.iter().flatten().chain(
+            config
+                .windows
+                .iter()
+                .flatten()
+                .flat_map(|w| w.panes.iter().flatten()),
+        );
+
+        for pane in all_panes {
+            if pane.command.is_some() && pane.agent.is_some() {
+                anyhow::bail!(
+                    "pane config has both 'command' and 'agent' set — use one or the other"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Load configuration from a specific path.
     fn load_from_path(path: &Path) -> anyhow::Result<Option<Self>> {
         if !path.exists() {
@@ -1457,6 +1531,7 @@ impl Config {
         let contents = fs::read_to_string(path)?;
         let config: Config = serde_yaml::from_str(&contents)
             .map_err(|e| anyhow::anyhow!("Failed to parse config at {}: {}", path.display(), e))?;
+        Self::validate_panes(&config)?;
         Ok(Some(config))
     }
 
@@ -1561,6 +1636,11 @@ impl Config {
             auto_update_check,
             prompt_file_only,
         );
+
+        // Merge agents maps: project entries override global entries with same alias
+        let mut agents = self.agents;
+        agents.extend(project.agents);
+        merged.agents = agents;
 
         // Deep merge auto_name. Security: command is global-only to prevent
         // a malicious .workmux.yaml from executing arbitrary commands on the host.
@@ -1779,20 +1859,13 @@ impl Config {
     fn default_panes() -> Vec<PaneConfig> {
         vec![
             PaneConfig {
-                command: None, // Default shell
                 focus: true,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
             PaneConfig {
                 command: Some("clear".to_string()),
-                focus: false,
                 split: Some(SplitDirection::Horizontal),
-                size: None,
-                percentage: None,
-                target: None, // Splits most recent (pane 0)
+                ..Default::default()
             },
         ]
     }
@@ -1803,18 +1876,12 @@ impl Config {
             PaneConfig {
                 command: Some("<agent>".to_string()),
                 focus: true,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
             PaneConfig {
                 command: Some("clear".to_string()),
-                focus: false,
                 split: Some(SplitDirection::Horizontal),
-                size: None,
-                percentage: None,
-                target: None, // Splits most recent (pane 0)
+                ..Default::default()
             },
         ]
     }
@@ -1929,13 +1996,32 @@ pub const EXAMPLE_PROJECT_CONFIG: &str = r#"# workmux project configuration
 
 # Custom tmux pane layout (mutually exclusive with 'windows').
 # Default: Two-pane layout with shell and clear command.
+#
+# Each pane uses either 'command' or 'agent', never both (workmux will
+# error if a pane has both keys set):
+#   - command: a literal shell command to run in the pane
+#   - agent:   an agent name (e.g. "claude") or profile alias (e.g. "cc-work")
+#              that gets resolved through the 'agents' config map
+#
 # panes:
-#   - command: pnpm install
+#   - command: <agent>     # resolves to the configured default agent
 #     focus: true
-#   - split: horizontal
-#   - command: clear
+#   - command: npm run dev
+#     split: horizontal
+#
+# Using agent profiles in panes:
+# panes:
+#   - agent: cc-work       # resolved through agents map
+#     focus: true
+#   - command: pnpm run dev
+#     split: horizontal
+#
+# Multiple agents side by side:
+# panes:
+#   - agent: cc-work
+#     focus: true
+#   - agent: cod
 #     split: vertical
-#     size: 5
 
 # Multiple windows per session (session mode only, mutually exclusive with 'panes').
 # Each window can have its own pane layout. Unnamed windows get tmux's
@@ -1970,6 +2056,20 @@ pub const EXAMPLE_PROJECT_CONFIG: &str = r#"# workmux project configuration
 # Agent command for '<agent>' placeholder in pane commands.
 # Default: "claude"
 # agent: claude
+
+# Named agent profiles. Define aliases that map to a command and agent type.
+# Use aliases with --agent, in config 'agent' field, or as pane commands.
+# Profiles inherit behavior (prompt injection, flags) from their type.
+# agents:
+#   cc-work:
+#     command: claude --dangerously-skip-permissions
+#     type: claude
+#   cc-personal:
+#     command: ~/.local/bin/claude-personal
+#     type: claude
+#   cod:
+#     command: codex --yolo
+#     type: codex
 
 # LLM-based branch name generation (`workmux add -A`).
 # auto_name:
@@ -3382,21 +3482,14 @@ windows:
                 panes: Some(vec![super::PaneConfig {
                     command: Some("<agent>".to_string()),
                     focus: true,
-                    split: None,
-                    size: None,
-                    percentage: None,
-                    target: None,
+                    ..Default::default()
                 }]),
             },
             WindowConfig {
                 name: None,
                 panes: Some(vec![super::PaneConfig {
                     command: Some("tail -f app.log".to_string()),
-                    focus: false,
-                    split: None,
-                    size: None,
-                    percentage: None,
-                    target: None,
+                    ..Default::default()
                 }]),
             },
         ];
@@ -3409,11 +3502,8 @@ windows:
             name: Some("bad".to_string()),
             panes: Some(vec![super::PaneConfig {
                 command: None,
-                focus: false,
                 split: Some(super::SplitDirection::Horizontal), // first pane cannot have split
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             }]),
         }];
         let result = validate_windows_config(&windows);
@@ -3427,10 +3517,7 @@ windows:
             panes: Some(vec![super::PaneConfig {
                 command: Some("vim".to_string()),
                 focus: true,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             }]),
             ..Default::default()
         };
@@ -3468,10 +3555,7 @@ windows:
             panes: Some(vec![super::PaneConfig {
                 command: Some("vim".to_string()),
                 focus: true,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             }]),
             ..Default::default()
         };
@@ -3737,5 +3821,202 @@ sandbox:
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.theme.scheme, ThemeScheme::Default);
         assert_eq!(config.theme.mode, None);
+    }
+
+    // === Agent profile (alias) tests ===
+
+    use super::AgentConfig;
+
+    #[test]
+    fn agents_config_deserializes() {
+        let yaml = r#"
+agents:
+  cc-work:
+    command: claude
+    type: claude
+  cc-personal:
+    command: ~/.local/bin/claude-personal
+    type: claude
+  cod:
+    command: codex
+    type: codex
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.agents.len(), 3);
+        assert_eq!(config.agents["cc-work"].command, "claude");
+        assert_eq!(config.agents["cc-work"].agent_type, "claude");
+        assert_eq!(
+            config.agents["cc-personal"].command,
+            "~/.local/bin/claude-personal"
+        );
+        assert_eq!(config.agents["cod"].agent_type, "codex");
+    }
+
+    #[test]
+    fn agents_config_empty_by_default() {
+        let yaml = "agent: claude";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.agents.is_empty());
+    }
+
+    #[test]
+    fn resolve_agent_alias_resolves_known_alias() {
+        let mut config = Config::default();
+        config.agents.insert(
+            "cc-work".to_string(),
+            AgentConfig {
+                command: "claude".to_string(),
+                agent_type: "claude".to_string(),
+            },
+        );
+        Config::resolve_agent_alias(&mut config, "cc-work".to_string());
+        assert_eq!(config.agent.as_deref(), Some("claude"));
+        assert_eq!(config.agent_type_override.as_deref(), Some("claude"));
+        assert_eq!(config.agent_alias.as_deref(), Some("cc-work"));
+    }
+
+    #[test]
+    fn resolve_agent_alias_custom_command_path() {
+        let mut config = Config::default();
+        config.agents.insert(
+            "cc-personal".to_string(),
+            AgentConfig {
+                command: "~/.local/bin/claude-personal".to_string(),
+                agent_type: "claude".to_string(),
+            },
+        );
+        Config::resolve_agent_alias(&mut config, "cc-personal".to_string());
+        assert_eq!(
+            config.agent.as_deref(),
+            Some("~/.local/bin/claude-personal")
+        );
+        assert_eq!(config.agent_type_override.as_deref(), Some("claude"));
+        assert_eq!(config.agent_alias.as_deref(), Some("cc-personal"));
+    }
+
+    #[test]
+    fn resolve_agent_alias_passthrough_for_non_alias() {
+        let mut config = Config::default();
+        Config::resolve_agent_alias(&mut config, "claude".to_string());
+        assert_eq!(config.agent.as_deref(), Some("claude"));
+        assert!(config.agent_type_override.is_none());
+        assert!(config.agent_alias.is_none());
+    }
+
+    #[test]
+    fn resolve_agent_alias_shadows_builtin() {
+        let mut config = Config::default();
+        config.agents.insert(
+            "claude".to_string(),
+            AgentConfig {
+                command: "/custom/claude".to_string(),
+                agent_type: "claude".to_string(),
+            },
+        );
+        Config::resolve_agent_alias(&mut config, "claude".to_string());
+        assert_eq!(config.agent.as_deref(), Some("/custom/claude"));
+        assert_eq!(config.agent_type_override.as_deref(), Some("claude"));
+        assert_eq!(config.agent_alias.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn agents_map_merge_combines_global_and_project() {
+        let mut global = Config::default();
+        global.agents.insert(
+            "cc-work".to_string(),
+            AgentConfig {
+                command: "claude".to_string(),
+                agent_type: "claude".to_string(),
+            },
+        );
+
+        let mut project = Config::default();
+        project.agents.insert(
+            "cc-personal".to_string(),
+            AgentConfig {
+                command: "~/.local/bin/claude-personal".to_string(),
+                agent_type: "claude".to_string(),
+            },
+        );
+
+        let merged = global.merge(project);
+        assert_eq!(merged.agents.len(), 2);
+        assert!(merged.agents.contains_key("cc-work"));
+        assert!(merged.agents.contains_key("cc-personal"));
+    }
+
+    #[test]
+    fn agents_map_merge_project_overrides_global() {
+        let mut global = Config::default();
+        global.agents.insert(
+            "cc-work".to_string(),
+            AgentConfig {
+                command: "claude".to_string(),
+                agent_type: "claude".to_string(),
+            },
+        );
+
+        let mut project = Config::default();
+        project.agents.insert(
+            "cc-work".to_string(),
+            AgentConfig {
+                command: "/project/claude".to_string(),
+                agent_type: "gemini".to_string(),
+            },
+        );
+
+        let merged = global.merge(project);
+        assert_eq!(merged.agents.len(), 1);
+        assert_eq!(merged.agents["cc-work"].command, "/project/claude");
+        assert_eq!(merged.agents["cc-work"].agent_type, "gemini");
+    }
+
+    // === Pane agent field tests ===
+
+    #[test]
+    fn pane_agent_field_deserializes() {
+        let yaml = r#"
+panes:
+  - agent: cc-work
+    focus: true
+  - command: npm run dev
+    split: horizontal
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let panes = config.panes.unwrap();
+        assert_eq!(panes[0].agent.as_deref(), Some("cc-work"));
+        assert!(panes[0].command.is_none());
+        assert!(panes[1].agent.is_none());
+        assert_eq!(panes[1].command.as_deref(), Some("npm run dev"));
+    }
+
+    #[test]
+    fn pane_agent_and_command_both_set_fails_validation() {
+        let yaml = r#"
+panes:
+  - agent: cc-work
+    command: claude
+    focus: true
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let result = Config::validate_panes(&config);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("both 'command' and 'agent'")
+        );
+    }
+
+    #[test]
+    fn pane_agent_without_command_passes_validation() {
+        let yaml = r#"
+panes:
+  - agent: cc-work
+    focus: true
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(Config::validate_panes(&config).is_ok());
     }
 }

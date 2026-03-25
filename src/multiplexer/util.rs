@@ -48,6 +48,7 @@ pub fn rewrite_agent_command(
     prompt_file: &Path,
     working_dir: &Path,
     effective_agent: Option<&str>,
+    agent_type_override: Option<&str>,
     shell: &str,
 ) -> Option<String> {
     let agent_command = effective_agent?;
@@ -77,7 +78,7 @@ pub fn rewrite_agent_command(
 
     // Build the inner command step-by-step to ensure correct order:
     // [executable] [default_subcommand?] [user_args] [prompt_argument]
-    let profile = super::agent::resolve_profile(effective_agent);
+    let profile = super::agent::resolve_profile(effective_agent, agent_type_override);
     let mut inner_cmd = pane_token.to_string();
 
     // Insert default subcommand (e.g., "chat" for kiro-cli) if the user
@@ -125,27 +126,73 @@ pub struct ResolvedCommand {
     pub effective_agent: Option<String>,
 }
 
+#[cfg(test)]
 pub fn resolve_pane_command(
     pane_command: Option<&str>,
     run_commands: bool,
     prompt_file_path: Option<&Path>,
     working_dir: &Path,
     effective_agent: Option<&str>,
+    agent_type_override: Option<&str>,
     shell: &str,
 ) -> Option<ResolvedCommand> {
-    let raw_command = pane_command?;
+    resolve_pane_command_with_aliases(
+        pane_command,
+        None, // no pane-level agent
+        run_commands,
+        prompt_file_path,
+        working_dir,
+        effective_agent,
+        agent_type_override,
+        &std::collections::BTreeMap::new(),
+        shell,
+    )
+}
 
-    let (command, pane_effective_agent) = if raw_command == "<agent>" {
-        // Bare <agent> - use window-level effective agent
-        let agent = effective_agent?;
-        (agent, effective_agent)
-    } else if super::agent::is_known_agent(raw_command) {
-        // Known agent command (e.g., "codex --flags") - use itself as effective
-        // agent so prompt injection works even when it's not the configured agent
-        (raw_command, Some(raw_command))
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_pane_command_with_aliases(
+    pane_command: Option<&str>,
+    pane_agent: Option<&str>,
+    run_commands: bool,
+    prompt_file_path: Option<&Path>,
+    working_dir: &Path,
+    effective_agent: Option<&str>,
+    agent_type_override: Option<&str>,
+    agents: &std::collections::BTreeMap<String, crate::config::AgentConfig>,
+    shell: &str,
+) -> Option<ResolvedCommand> {
+    // Resolve pane agent field: look up alias, then use as literal agent command
+    let (resolved_alias_command, resolved_alias_type);
+    let (command, pane_effective_agent, pane_type_override) = if let Some(agent_name) = pane_agent {
+        // Pane has explicit `agent` field — resolve through aliases or use directly
+        if let Some(alias_config) = agents.get(agent_name) {
+            resolved_alias_command = alias_config.command.as_str();
+            resolved_alias_type = alias_config.agent_type.as_str();
+            (
+                resolved_alias_command,
+                Some(resolved_alias_command),
+                Some(resolved_alias_type),
+            )
+        } else {
+            // Not an alias — use as literal agent command (e.g., "claude", "gemini")
+            (agent_name, Some(agent_name), agent_type_override)
+        }
     } else {
-        // Regular command - use window-level effective agent for prompt injection matching
-        (raw_command, effective_agent)
+        // No pane agent — fall back to command field resolution
+        let raw_command = pane_command?;
+
+        if raw_command == "<agent>" {
+            // Bare <agent> - use window-level effective agent
+            let agent = effective_agent?;
+            (agent, effective_agent, agent_type_override)
+        } else if super::agent::is_known_agent(raw_command) {
+            // Known agent command (e.g., "codex --flags") - use itself as effective
+            // agent so prompt injection works even when it's not the configured agent
+            (raw_command, Some(raw_command), agent_type_override)
+        } else {
+            // Regular command - use window-level effective agent for prompt injection matching
+            (raw_command, effective_agent, agent_type_override)
+        }
     };
 
     if !run_commands {
@@ -157,6 +204,7 @@ pub fn resolve_pane_command(
         prompt_file_path,
         working_dir,
         pane_effective_agent,
+        pane_type_override,
         shell,
     );
     let prompt_injected = matches!(result, Cow::Owned(_));
@@ -176,11 +224,18 @@ pub fn adjust_command<'a>(
     prompt_file_path: Option<&Path>,
     working_dir: &Path,
     effective_agent: Option<&str>,
+    agent_type_override: Option<&str>,
     shell: &str,
 ) -> Cow<'a, str> {
     if let Some(prompt_path) = prompt_file_path
-        && let Some(rewritten) =
-            rewrite_agent_command(command, prompt_path, working_dir, effective_agent, shell)
+        && let Some(rewritten) = rewrite_agent_command(
+            command,
+            prompt_path,
+            working_dir,
+            effective_agent,
+            agent_type_override,
+            shell,
+        )
     {
         return Cow::Owned(rewritten);
     }
@@ -188,7 +243,7 @@ pub fn adjust_command<'a>(
     // Even without a prompt, insert the default subcommand if needed
     // (e.g., "kiro-cli" -> "kiro-cli chat"). Only applies when the
     // command itself is the agent (stem must match).
-    let profile = super::agent::resolve_profile(effective_agent);
+    let profile = super::agent::resolve_profile(effective_agent, agent_type_override);
     if let Some(subcmd) = profile.default_subcommand()
         && let Some((token, rest_with_leading)) = crate::config::split_first_token(command)
     {
@@ -362,6 +417,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("claude"),
+            None,
             "/bin/zsh",
         );
         // POSIX shell: no wrapper, prefixed with space to prevent history
@@ -378,6 +434,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("gemini"),
+            None,
             "/bin/bash",
         );
         assert_eq!(result, Some(" gemini -i \"$(cat PROMPT.md)\"".to_string()));
@@ -393,6 +450,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("opencode"),
+            None,
             "/bin/zsh",
         );
         assert_eq!(
@@ -412,6 +470,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("kiro-cli"),
+            None,
             "/bin/zsh",
         );
         assert_eq!(
@@ -431,6 +490,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("kiro-cli chat"),
+            None,
             "/bin/zsh",
         );
         assert_eq!(
@@ -450,6 +510,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("kiro-cli chat --model sonnet"),
+            None,
             "/bin/zsh",
         );
         assert_eq!(
@@ -468,6 +529,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("claude"),
+            None,
             "/bin/bash",
         );
         assert_eq!(
@@ -488,6 +550,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("claude"),
+            None,
             "/opt/homebrew/bin/nu",
         );
         // Non-POSIX shell: wrap in sh -c, prefixed with space
@@ -508,6 +571,7 @@ mod tests {
             &prompt_file,
             &working_dir,
             Some("gemini"),
+            None,
             "/bin/zsh",
         );
         assert_eq!(result, None);
@@ -518,8 +582,14 @@ mod tests {
         let prompt_file = PathBuf::from("/tmp/worktree/PROMPT.md");
         let working_dir = PathBuf::from("/tmp/worktree");
 
-        let result =
-            rewrite_agent_command("", &prompt_file, &working_dir, Some("claude"), "/bin/zsh");
+        let result = rewrite_agent_command(
+            "",
+            &prompt_file,
+            &working_dir,
+            Some("claude"),
+            None,
+            "/bin/zsh",
+        );
         assert_eq!(result, None);
     }
 
@@ -669,7 +739,8 @@ mod tests {
 
     #[test]
     fn test_resolve_pane_command_none_when_no_command() {
-        let result = resolve_pane_command(None, true, None, Path::new("/tmp"), None, "/bin/zsh");
+        let result =
+            resolve_pane_command(None, true, None, Path::new("/tmp"), None, None, "/bin/zsh");
         assert!(result.is_none());
     }
 
@@ -681,6 +752,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             None,
+            None,
             "/bin/zsh",
         );
         assert!(result.is_none());
@@ -688,8 +760,15 @@ mod tests {
 
     #[test]
     fn test_resolve_pane_command_returns_command_as_is() {
-        let result =
-            resolve_pane_command(Some("vim"), true, None, Path::new("/tmp"), None, "/bin/zsh");
+        let result = resolve_pane_command(
+            Some("vim"),
+            true,
+            None,
+            Path::new("/tmp"),
+            None,
+            None,
+            "/bin/zsh",
+        );
         let resolved = result.unwrap();
         assert_eq!(resolved.command, "vim");
         assert!(!resolved.prompt_injected);
@@ -703,6 +782,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("claude"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -717,6 +797,7 @@ mod tests {
             true,
             None,
             Path::new("/tmp"),
+            None,
             None,
             "/bin/zsh",
         );
@@ -733,6 +814,7 @@ mod tests {
             Some(&prompt),
             &working_dir,
             Some("claude"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -750,6 +832,7 @@ mod tests {
             Some(&prompt),
             &working_dir,
             Some("claude"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -765,6 +848,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("claude"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -780,6 +864,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("claude"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -800,6 +885,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("claude"), // window-level agent is claude
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -818,6 +904,7 @@ mod tests {
             Some(&prompt),
             &working_dir,
             Some("claude"), // window-level is claude, pane is codex
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -837,6 +924,7 @@ mod tests {
             Some(&prompt),
             &working_dir,
             None, // no window-level agent at all
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -857,6 +945,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("kiro-cli"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -872,6 +961,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("kiro-cli chat"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -887,6 +977,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("kiro-cli"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -904,6 +995,7 @@ mod tests {
             Some(&prompt),
             &working_dir,
             Some("kiro-cli"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();
@@ -920,6 +1012,7 @@ mod tests {
             None,
             Path::new("/tmp"),
             Some("kiro-cli --verbose"),
+            None,
             "/bin/zsh",
         );
         let resolved = result.unwrap();

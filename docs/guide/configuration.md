@@ -20,6 +20,15 @@ nerdfont: true # Enable nerdfont icons (prompted on first run)
 merge_strategy: rebase # Make workmux merge do rebase by default
 agent: claude
 
+# Named agent profiles (optional)
+agents:
+  cc-work:
+    command: claude
+    type: claude
+  cc-personal:
+    command: ~/.local/bin/claude-personal
+    type: claude
+
 panes:
   - command: <agent> # Start the configured agent (e.g., claude)
     focus: true
@@ -65,6 +74,7 @@ Most options have sensible defaults. You only need to configure what you want to
 | `nerdfont`         | Enable nerdfont icons (prompted on first run)                               | Prompted                    |
 | `window_prefix`    | Override tmux window/session prefix                                         | Icon or `wm-`               |
 | `agent`            | Default agent for `<agent>` placeholder                                     | `claude`                    |
+| `agents`           | Named agent profiles (see [agent profiles](/guide/agents#agent-profiles))   | --                          |
 | `prompt_file_only` | Write prompt files without injecting into agent commands                    | `false`                     |
 | `layouts`          | Named pane layouts, selectable with `-l/--layout`                           | --                          |
 | `merge_strategy`   | Default merge strategy (`merge`, `rebase`, `squash`)                        | `merge`                     |
@@ -118,7 +128,8 @@ Each pane supports:
 
 | Option       | Description                                                          | Default |
 | ------------ | -------------------------------------------------------------------- | ------- |
-| `command`    | Command to run (see [agent placeholders](#agent-placeholders) below) | Shell   |
+| `command`    | Command to run (see [agent placeholders](#agent-placeholders) below). Mutually exclusive with `agent`. | Shell   |
+| `agent`      | Agent name or [profile alias](/guide/agents#agent-profiles) to run. Mutually exclusive with `command`. | --      |
 | `focus`      | Whether this pane receives focus                                     | `false` |
 | `split`      | Split direction (`horizontal` or `vertical`)                         | ---     |
 | `size`       | Absolute size in lines/cells                                         | 50%     |
@@ -128,7 +139,7 @@ Each pane supports:
 
 - `<agent>`: resolves to the configured agent (from `agent` config or `--agent` flag)
 
-Built-in agents (`claude`, `gemini`, `codex`, `opencode`, `kiro-cli`, `vibe`, `pi`) are auto-detected when used as literal commands and receive prompt injection automatically, without needing the `<agent>` placeholder or a matching `agent` config:
+Built-in agents (`claude`, `gemini`, `codex`, `opencode`, `kiro-cli`, `vibe`, `pi`) are auto-detected when used as literal `command` values and receive prompt injection automatically, without needing the `<agent>` placeholder or a matching `agent` config. For [user-defined agent profiles](/guide/agents#agent-profiles), use the `agent` pane field instead:
 
 ```yaml
 panes:

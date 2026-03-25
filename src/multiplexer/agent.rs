@@ -269,10 +269,31 @@ pub fn is_known_agent(command: &str) -> bool {
     PROFILES.iter().any(|p| p.name() == stem)
 }
 
+/// Check if a type name matches a known built-in agent profile.
+pub fn is_known_type(type_name: &str) -> bool {
+    PROFILES.iter().any(|p| p.name() == type_name)
+}
+
 /// Resolve an agent command to its profile.
 ///
+/// When `type_override` is provided (from a user-defined agent profile), it takes
+/// precedence over extracting the type from the command's executable stem. This
+/// allows custom commands like `~/.local/bin/claude-personal` to inherit behavior
+/// from a built-in profile like `ClaudeProfile`.
+///
 /// Returns `DefaultProfile` if no specific profile matches.
-pub fn resolve_profile(agent_command: Option<&str>) -> &'static dyn AgentProfile {
+pub fn resolve_profile(
+    agent_command: Option<&str>,
+    type_override: Option<&str>,
+) -> &'static dyn AgentProfile {
+    // If there's an explicit type override, use it for profile lookup
+    if let Some(type_name) = type_override
+        && let Some(profile) = PROFILES.iter().find(|p| p.name() == type_name).copied()
+    {
+        return profile;
+    }
+    // Invalid type falls through to command-based resolution
+
     let Some(cmd) = agent_command else {
         return &DefaultProfile;
     };
@@ -444,67 +465,67 @@ mod tests {
 
     #[test]
     fn test_resolve_profile_none() {
-        let profile = resolve_profile(None);
+        let profile = resolve_profile(None, None);
         assert_eq!(profile.name(), "default");
     }
 
     #[test]
     fn test_resolve_profile_claude() {
-        let profile = resolve_profile(Some("claude"));
+        let profile = resolve_profile(Some("claude"), None);
         assert_eq!(profile.name(), "claude");
     }
 
     #[test]
     fn test_resolve_profile_claude_with_args() {
-        let profile = resolve_profile(Some("claude --verbose"));
+        let profile = resolve_profile(Some("claude --verbose"), None);
         assert_eq!(profile.name(), "claude");
     }
 
     #[test]
     fn test_resolve_profile_gemini() {
-        let profile = resolve_profile(Some("gemini"));
+        let profile = resolve_profile(Some("gemini"), None);
         assert_eq!(profile.name(), "gemini");
     }
 
     #[test]
     fn test_resolve_profile_opencode() {
-        let profile = resolve_profile(Some("opencode"));
+        let profile = resolve_profile(Some("opencode"), None);
         assert_eq!(profile.name(), "opencode");
     }
 
     #[test]
     fn test_resolve_profile_pi() {
-        let profile = resolve_profile(Some("pi"));
+        let profile = resolve_profile(Some("pi"), None);
         assert_eq!(profile.name(), "pi");
     }
 
     #[test]
     fn test_resolve_profile_codex() {
-        let profile = resolve_profile(Some("codex"));
+        let profile = resolve_profile(Some("codex"), None);
         assert_eq!(profile.name(), "codex");
     }
 
     #[test]
     fn test_resolve_profile_kiro() {
-        let profile = resolve_profile(Some("kiro-cli"));
+        let profile = resolve_profile(Some("kiro-cli"), None);
         assert_eq!(profile.name(), "kiro-cli");
     }
 
     #[test]
     fn test_resolve_profile_kiro_with_subcommand() {
-        let profile = resolve_profile(Some("kiro-cli chat"));
+        let profile = resolve_profile(Some("kiro-cli chat"), None);
         assert_eq!(profile.name(), "kiro-cli");
     }
 
     #[test]
     fn test_resolve_profile_vibe() {
-        let profile = resolve_profile(Some("vibe"));
+        let profile = resolve_profile(Some("vibe"), None);
         assert_eq!(profile.name(), "vibe");
     }
 
     #[test]
     fn test_resolve_profile_unknown() {
-        let profile = resolve_profile(Some("unknown-agent"));
+        let profile = resolve_profile(Some("unknown-agent"), None);
         assert_eq!(profile.name(), "default");
     }
 
@@ -534,5 +555,56 @@ mod tests {
         assert!(!is_known_agent("npm run dev"));
         assert!(!is_known_agent("clear"));
         assert!(!is_known_agent("unknown-agent"));
+    }
+
+    // === type override tests ===
+
+    #[test]
+    fn test_resolve_profile_type_override_custom_command() {
+        // Custom command path with type override should use the override's profile
+        let profile = resolve_profile(Some("~/.local/bin/claude-personal"), Some("claude"));
+        assert_eq!(profile.name(), "claude");
+        assert!(profile.needs_bang_delay());
+    }
+
+    #[test]
+    fn test_resolve_profile_type_override_takes_precedence() {
+        // Type override should win over stem extraction
+        let profile = resolve_profile(Some("gemini"), Some("claude"));
+        assert_eq!(profile.name(), "claude");
+    }
+
+    #[test]
+    fn test_resolve_profile_invalid_type_falls_back_to_stem() {
+        // Invalid type should fall through to stem-based resolution
+        let profile = resolve_profile(Some("claude"), Some("nonexistent"));
+        assert_eq!(profile.name(), "claude");
+    }
+
+    #[test]
+    fn test_resolve_profile_invalid_type_unknown_command() {
+        // Invalid type + unknown command = DefaultProfile
+        let profile = resolve_profile(Some("my-custom-agent"), Some("nonexistent"));
+        assert_eq!(profile.name(), "default");
+    }
+
+    // === is_known_type tests ===
+
+    #[test]
+    fn test_is_known_type_builtin() {
+        assert!(is_known_type("claude"));
+        assert!(is_known_type("gemini"));
+        assert!(is_known_type("codex"));
+        assert!(is_known_type("opencode"));
+        assert!(is_known_type("pi"));
+        assert!(is_known_type("kiro-cli"));
+        assert!(is_known_type("vibe"));
+    }
+
+    #[test]
+    fn test_is_known_type_unknown() {
+        assert!(!is_known_type("default"));
+        assert!(!is_known_type("unknown"));
+        assert!(!is_known_type(""));
     }
 }

@@ -331,22 +331,26 @@ fn pre_boot_lima_vm(
     // Check if any pane will actually need Lima wrapping by resolving
     // commands the same way setup_panes does (respects run_commands flag).
     let any_pane_needs_lima = panes.iter().any(|pane_config| {
-        let resolved = crate::multiplexer::util::resolve_pane_command(
+        let resolved = crate::multiplexer::util::resolve_pane_command_with_aliases(
             pane_config.command.as_deref(),
+            pane_config.agent.as_deref(),
             options.run_pane_commands,
             options.prompt_file_path.as_deref(),
             working_dir,
             effective_agent,
+            config.agent_type_override.as_deref(),
+            &config.agents,
             &shell,
         );
         if resolved.is_none() {
             return false;
         }
-        let is_agent_pane = pane_config.command.as_deref().is_some_and(|cmd| {
-            cmd == "<agent>"
-                || crate::multiplexer::agent::is_known_agent(cmd)
-                || effective_agent.is_some_and(|a| crate::config::is_agent_command(cmd, a))
-        });
+        let is_agent_pane = pane_config.agent.is_some()
+            || pane_config.command.as_deref().is_some_and(|cmd| {
+                cmd == "<agent>"
+                    || crate::multiplexer::agent::is_known_agent(cmd)
+                    || effective_agent.is_some_and(|a| crate::config::is_agent_command(cmd, a))
+            });
         match config.sandbox.target() {
             crate::config::SandboxTarget::All => true,
             crate::config::SandboxTarget::Agent => is_agent_pane,
@@ -371,9 +375,10 @@ pub fn resolve_pane_configuration(
     };
 
     if original_panes.iter().any(|pane| {
-        pane.command
-            .as_deref()
-            .is_some_and(|cmd| cmd == "<agent>" || crate::multiplexer::agent::is_known_agent(cmd))
+        pane.agent.is_some()
+            || pane.command.as_deref().is_some_and(|cmd| {
+                cmd == "<agent>" || crate::multiplexer::agent::is_known_agent(cmd)
+            })
     }) {
         return original_panes.to_vec();
     }
@@ -393,10 +398,7 @@ pub fn resolve_pane_configuration(
     vec![config::PaneConfig {
         command: Some(agent_cmd.to_string()),
         focus: true,
-        split: None,
-        size: None,
-        percentage: None,
-        target: None,
+        ..Default::default()
     }]
 }
 
@@ -486,10 +488,7 @@ mod tests {
         let original_panes = vec![config::PaneConfig {
             command: Some("vim".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
 
         let result = resolve_pane_configuration(&original_panes, None);
@@ -502,10 +501,7 @@ mod tests {
         let original_panes = vec![config::PaneConfig {
             command: Some("<agent>".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
 
         let result = resolve_pane_configuration(&original_panes, Some("claude"));
@@ -518,19 +514,12 @@ mod tests {
         let original_panes = vec![
             config::PaneConfig {
                 command: Some("vim".to_string()),
-                focus: false,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
             config::PaneConfig {
                 command: Some("npm run dev".to_string()),
                 focus: true,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
         ];
 
@@ -543,11 +532,7 @@ mod tests {
     fn resolve_pane_configuration_agent_sets_first_pane_when_no_focus() {
         let original_panes = vec![config::PaneConfig {
             command: Some("vim".to_string()),
-            focus: false,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
 
         let result = resolve_pane_configuration(&original_panes, Some("claude"));
@@ -591,10 +576,7 @@ mod tests {
         let panes = vec![config::PaneConfig {
             command: Some("<agent>".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
         let config = make_config_with_agent(Some("claude"));
         let options = make_options_with_prompt(false); // pane commands disabled
@@ -614,10 +596,7 @@ mod tests {
         let panes = vec![config::PaneConfig {
             command: Some("vim".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
         let config = make_config_with_agent(None); // no agent
         let options = make_options_with_prompt(true);
@@ -638,18 +617,12 @@ mod tests {
             config::PaneConfig {
                 command: None, // shell
                 focus: true,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
             config::PaneConfig {
                 command: Some("clear".to_string()),
-                focus: false,
                 split: Some(config::SplitDirection::Horizontal),
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
         ];
         let config = make_config_with_agent(Some("claude"));
@@ -667,10 +640,7 @@ mod tests {
         let panes = vec![config::PaneConfig {
             command: Some("<agent>".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
         let config = make_config_with_agent(Some("claude"));
         let options = make_options_with_prompt(true);
@@ -684,10 +654,7 @@ mod tests {
         let panes = vec![config::PaneConfig {
             command: Some("claude".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
         let config = make_config_with_agent(Some("claude"));
         let options = make_options_with_prompt(true);
@@ -701,10 +668,7 @@ mod tests {
         let panes = vec![config::PaneConfig {
             command: Some("my-custom-agent".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
         let config = make_config_with_agent(Some("claude")); // config says claude
         let options = make_options_with_prompt(true);
@@ -724,19 +688,13 @@ mod tests {
         let panes = vec![
             config::PaneConfig {
                 command: Some("vim".to_string()), // doesn't match
-                focus: false,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
             config::PaneConfig {
                 command: Some("claude --verbose".to_string()), // matches
                 focus: true,
                 split: Some(config::SplitDirection::Horizontal),
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
         ];
         let config = make_config_with_agent(Some("claude"));
@@ -751,10 +709,7 @@ mod tests {
         let panes = vec![config::PaneConfig {
             command: Some("codex --yolo".to_string()),
             focus: true,
-            split: None,
-            size: None,
-            percentage: None,
-            target: None,
+            ..Default::default()
         }];
         let config = make_config_with_agent(None); // no global agent
         let options = make_options_with_prompt(true);
@@ -770,18 +725,12 @@ mod tests {
             config::PaneConfig {
                 command: Some("claude --dangerously-skip-permissions".to_string()),
                 focus: true,
-                split: None,
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
             config::PaneConfig {
                 command: Some("codex --yolo".to_string()),
-                focus: false,
                 split: Some(config::SplitDirection::Vertical),
-                size: None,
-                percentage: None,
-                target: None,
+                ..Default::default()
             },
         ];
 
@@ -874,9 +823,11 @@ fn validate_prompt_consumption(
     // profile), so the prompt is consumed regardless of whether a global agent
     // is configured.
     let has_self_identifying_agent = panes.iter().any(|pane| {
-        pane.command
-            .as_deref()
-            .is_some_and(crate::multiplexer::agent::is_known_agent)
+        pane.agent.is_some()
+            || pane
+                .command
+                .as_deref()
+                .is_some_and(crate::multiplexer::agent::is_known_agent)
     });
 
     if has_self_identifying_agent {
