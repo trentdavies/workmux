@@ -34,7 +34,7 @@ pub fn action_for_key(ctx: Context, key: KeyEvent) -> Option<Action> {
 fn dashboard_normal_key(key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('?') => Some(Action::ShowHelp),
-        KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
+        KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Next),
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -193,7 +193,7 @@ pub fn help_rows(ctx: Context) -> Vec<(&'static str, &'static str)> {
     match ctx {
         Context::DashboardNormal => vec![
             ("?", "Show help"),
-            ("q/Esc", "Quit"),
+            ("q", "Quit"),
             ("j/k/C-n/C-p", "Navigate up/down"),
             ("Enter", "Jump to agent"),
             ("Tab", "Switch view"),
@@ -225,7 +225,7 @@ pub fn help_rows(ctx: Context) -> Vec<(&'static str, &'static str)> {
         ],
         Context::WorktreeNormal => vec![
             ("?", "Show help"),
-            ("q/Esc", "Quit"),
+            ("q", "Quit"),
             ("j/k/C-n/C-p", "Navigate up/down"),
             ("Enter", "Jump to worktree"),
             ("Tab", "Switch to agents"),
