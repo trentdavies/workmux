@@ -87,7 +87,7 @@ fn dashboard_filter_key(key: KeyEvent) -> Option<Action> {
 fn worktree_normal_key(key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('?') => Some(Action::ShowHelp),
-        KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
+        KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Tab => Some(Action::SwitchTab),
         KeyCode::Char('j') | KeyCode::Down => Some(Action::WorktreeNext),
