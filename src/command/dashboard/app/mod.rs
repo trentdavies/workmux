@@ -134,6 +134,8 @@ pub struct App {
     pub pending_base_picker: Option<BaseBranchPicker>,
     /// Override which repo's worktrees are shown (name, git root path)
     pub worktree_project_override: Option<(String, PathBuf)>,
+    /// User-configurable keymap with override support
+    pub keymap: super::keymap::Keymap,
     /// Flag to prevent concurrent worktree fetches
     is_worktree_fetching: Arc<AtomicBool>,
     /// Last time worktree list was fetched
@@ -189,6 +191,7 @@ impl App {
         let pr_statuses = crate::github::load_pr_cache();
         let hide_stale = load_hide_stale();
         let last_pane_id = load_last_pane_id();
+        let keymap = super::keymap::Keymap::new(&config.dashboard.keybindings);
 
         let mut app = Self {
             mux,
@@ -246,6 +249,7 @@ impl App {
             pending_project_picker: None,
             pending_base_picker: None,
             worktree_project_override: None,
+            keymap,
             is_worktree_fetching: Arc::new(AtomicBool::new(false)),
             // Set to past so first switch triggers immediate fetch
             last_worktree_fetch: std::time::Instant::now() - Duration::from_secs(60),

@@ -82,6 +82,26 @@ pub struct AutoNameConfig {
     pub background: Option<bool>,
 }
 
+/// Custom keybindings for dashboard contexts.
+/// Each context maps action names to a list of key strings.
+/// When an action is listed, you specify ALL its keys (replaces defaults for that action).
+/// Unlisted actions keep their default keybindings.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct KeybindingsConfig {
+    /// Keybindings for the agents list view
+    #[serde(default)]
+    pub normal: Option<BTreeMap<String, Vec<String>>>,
+    /// Keybindings for the worktrees list view
+    #[serde(default)]
+    pub worktree: Option<BTreeMap<String, Vec<String>>>,
+    /// Keybindings for the diff view
+    #[serde(default)]
+    pub diff: Option<BTreeMap<String, Vec<String>>>,
+    /// Keybindings for the patch (hunk staging) view
+    #[serde(default)]
+    pub patch: Option<BTreeMap<String, Vec<String>>>,
+}
+
 /// Configuration for dashboard actions (commit, merge keybindings)
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct DashboardConfig {
@@ -100,6 +120,10 @@ pub struct DashboardConfig {
     /// Show check pass/total counts alongside check icon (default: false)
     #[serde(default)]
     pub show_check_counts: Option<bool>,
+
+    /// Custom keybindings per dashboard context
+    #[serde(default)]
+    pub keybindings: Option<KeybindingsConfig>,
 }
 
 impl DashboardConfig {
@@ -1738,6 +1762,17 @@ impl Config {
                 .dashboard
                 .show_check_counts
                 .or(self.dashboard.show_check_counts),
+            keybindings: match (self.dashboard.keybindings, project.dashboard.keybindings) {
+                (Some(global), Some(proj)) => Some(KeybindingsConfig {
+                    normal: proj.normal.or(global.normal),
+                    worktree: proj.worktree.or(global.worktree),
+                    diff: proj.diff.or(global.diff),
+                    patch: proj.patch.or(global.patch),
+                }),
+                (_, Some(proj)) => Some(proj),
+                (Some(global), None) => Some(global),
+                (None, None) => None,
+            },
         };
 
         // Sandbox config: per-field override with nested struct merging
@@ -2143,6 +2178,41 @@ pub const EXAMPLE_PROJECT_CONFIG: &str = r#"# workmux project configuration
 #   commit: "Commit staged changes with a descriptive message"
 #   merge: "!workmux merge"
 #   preview_size: 60
+#
+#   # Custom keybindings per dashboard context.
+#   # When you list an action, you specify ALL its keys (replaces defaults).
+#   # Unlisted actions keep their default keybindings.
+#   #
+#   # Contexts: normal (agents list), worktree, diff, patch
+#   # Keys: single chars ("q", "?"), special ("esc", "enter", "tab", "backspace",
+#   #        "up", "down", "pageup", "pagedown"), modifiers ("ctrl+c", "ctrl+d")
+#   #
+#   # keybindings:
+#   #   normal:
+#   #     quit: ["q", "ctrl+c"]             # remove Esc from quit
+#   #     load_wip_diff: ["d", "enter"]     # add Enter as alternate
+#   #   diff:
+#   #     close_diff: ["q"]                 # remove Esc from close
+#   #   patch:
+#   #     exit_patch_mode: ["q"]            # remove Esc from exit
+#   #
+#   # Normal actions: quit, next, previous, jump_to_selected, jump_to_last,
+#   #   peek_selected, switch_tab, cycle_sort_mode, toggle_scope_filter,
+#   #   toggle_stale_filter, enter_input_mode, scroll_preview_up,
+#   #   scroll_preview_down, increase_preview_size, decrease_preview_size,
+#   #   load_wip_diff, send_commit, trigger_merge, show_base_branch_picker,
+#   #   open_pr, open_pr_checks, kill_selected, start_sweep, enter_filter_mode,
+#   #   cycle_color_scheme, show_help
+#   # Worktree actions: quit, worktree_next, worktree_previous,
+#   #   jump_to_selected_worktree, remove_selected_worktree,
+#   #   close_selected_worktree_window, cycle_worktree_sort_mode,
+#   #   show_project_picker, (+ shared actions above)
+#   # Diff actions: close_diff, scroll_up, scroll_down, scroll_page_up,
+#   #   scroll_page_down, toggle_diff_type, enter_patch_mode, send_commit,
+#   #   trigger_merge, show_help
+#   # Patch actions: exit_patch_mode, stage_and_next, skip_hunk,
+#   #   undo_staged_hunk, split_hunk, start_comment, prev_hunk, next_hunk,
+#   #   scroll_page_up, scroll_page_down, send_commit, trigger_merge, show_help
 
 #-------------------------------------------------------------------------------
 # Sandbox

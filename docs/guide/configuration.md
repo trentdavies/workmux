@@ -229,6 +229,122 @@ Supported tmux style attributes: `fg=`, `bg=`, `default`. Colors can be hex (`#a
 
 Set `status_format: false` to disable automatic tmux format modification.
 
+### Dashboard keybindings
+
+Remap keys in the dashboard by listing actions and their keys under `dashboard.keybindings`. When you list an action, you specify **all** its keys — unlisted actions keep their defaults.
+
+```yaml
+dashboard:
+  keybindings:
+    normal:
+      quit: ["q", "ctrl+c"]           # removes Esc from quit
+      load_wip_diff: ["d", "enter"]   # add Enter as alternate for diff
+    diff:
+      close_diff: ["q"]               # removes Esc from close
+    patch:
+      exit_patch_mode: ["q"]          # removes Esc from exit
+```
+
+Four contexts are remappable:
+
+| Context    | Description              |
+| ---------- | ------------------------ |
+| `normal`   | Agents list view         |
+| `worktree` | Worktrees list view      |
+| `diff`     | Diff viewer              |
+| `patch`    | Patch mode (hunk staging) |
+
+Filter, input, and comment contexts are not remappable since keys have semantic meaning there.
+
+#### Key format
+
+| Format         | Example        | Description                    |
+| -------------- | -------------- | ------------------------------ |
+| Single char    | `"q"`, `"?"`, `"/"`, `"+"` | Character key         |
+| Special key    | `"esc"`, `"enter"`, `"tab"`, `"backspace"` | Named special key |
+| Arrow key      | `"up"`, `"down"`, `"left"`, `"right"` | Arrow keys          |
+| Page key       | `"pageup"`, `"pagedown"` | Page navigation       |
+| Modifier       | `"ctrl+c"`, `"ctrl+d"`, `"ctrl+u"` | Ctrl + character   |
+
+#### Available actions
+
+**`normal` context** (agents list):
+
+| Action | Default keys | Description |
+| --- | --- | --- |
+| `show_help` | `?` | Show help overlay |
+| `quit` | `q`, `Esc` | Quit dashboard |
+| `next` | `j`, `Down` | Next agent |
+| `previous` | `k`, `Up` | Previous agent |
+| `jump_to_selected` | `Enter` | Jump to agent |
+| `jump_to_last` | `Backspace` | Jump to last agent |
+| `peek_selected` | `p` | Peek agent popup |
+| `switch_tab` | `Tab` | Switch to worktrees |
+| `cycle_sort_mode` | `s` | Cycle sort mode |
+| `toggle_scope_filter` | `F` | Toggle session filter |
+| `toggle_stale_filter` | `f` | Toggle stale filter |
+| `enter_input_mode` | `i` | Enter input mode |
+| `scroll_preview_up` | `Ctrl+u` | Scroll preview up |
+| `scroll_preview_down` | `Ctrl+d` | Scroll preview down |
+| `increase_preview_size` | `+`, `=` | Increase preview size |
+| `decrease_preview_size` | `-`, `_` | Decrease preview size |
+| `load_wip_diff` | `d` | View diff |
+| `send_commit` | `c` | Commit changes |
+| `trigger_merge` | `m` | Merge branch |
+| `show_base_branch_picker` | `b` | Change base branch |
+| `open_pr` | `o` | Open PR in browser |
+| `open_pr_checks` | `O` | Open PR checks |
+| `kill_selected` | `X` | Kill agent |
+| `start_sweep` | `R` | Sweep cleanup |
+| `enter_filter_mode` | `/` | Filter agents |
+| `cycle_color_scheme` | `T` | Cycle theme |
+
+**`worktree` context** (worktrees list):
+
+| Action | Default keys | Description |
+| --- | --- | --- |
+| `quit` | `q` | Quit dashboard |
+| `worktree_next` | `j`, `Down` | Next worktree |
+| `worktree_previous` | `k`, `Up` | Previous worktree |
+| `jump_to_selected_worktree` | `Enter` | Jump to worktree |
+| `remove_selected_worktree` | `r` | Remove worktree |
+| `close_selected_worktree_window` | `c` | Close mux window |
+| `cycle_worktree_sort_mode` | `s` | Cycle sort mode |
+| `show_project_picker` | `p` | Switch project |
+
+**`diff` context** (diff viewer):
+
+| Action | Default keys | Description |
+| --- | --- | --- |
+| `close_diff` | `q`, `Esc` | Close diff |
+| `scroll_up` | `k`, `Up` | Scroll up |
+| `scroll_down` | `j`, `Down` | Scroll down |
+| `scroll_page_up` | `PageUp`, `Ctrl+u` | Page up |
+| `scroll_page_down` | `PageDown`, `Ctrl+d` | Page down |
+| `toggle_diff_type` | `Tab` | Toggle WIP/Review |
+| `enter_patch_mode` | `a` | Enter patch mode |
+| `send_commit` | `c` | Commit changes |
+| `trigger_merge` | `m` | Merge branch |
+
+**`patch` context** (hunk staging):
+
+| Action | Default keys | Description |
+| --- | --- | --- |
+| `exit_patch_mode` | `q`, `Esc` | Exit patch mode |
+| `stage_and_next` | `y` | Stage hunk |
+| `skip_hunk` | `n` | Skip hunk |
+| `undo_staged_hunk` | `u` | Undo last staged |
+| `split_hunk` | `s` | Split hunk |
+| `start_comment` | `o` | Add comment |
+| `prev_hunk` | `k`, `Up` | Previous hunk |
+| `next_hunk` | `j`, `Down` | Next hunk |
+| `scroll_page_up` | `Ctrl+u` | Scroll up |
+| `scroll_page_down` | `Ctrl+d` | Scroll down |
+| `send_commit` | `c` | Commit changes |
+| `trigger_merge` | `m` | Merge branch |
+
+Actions shared across multiple contexts (`show_help`, `switch_tab`, `open_pr`, `open_pr_checks`, `cycle_color_scheme`, `enter_filter_mode`, `show_base_branch_picker`, `start_sweep`) can be remapped in any context that supports them.
+
 ### Auto-name configuration
 
 Configure LLM-based branch name generation for the `--auto-name` (`-A`) flag:

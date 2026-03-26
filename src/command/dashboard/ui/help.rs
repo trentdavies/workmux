@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use super::super::app::{App, DashboardTab, ViewMode};
-use super::super::keymap::{Context, help_rows};
+use super::super::keymap::Context;
 
 /// Determine the current keymap context for help display.
 fn get_help_context(app: &App) -> Context {
@@ -234,7 +234,7 @@ pub fn render_confirm_remove(f: &mut Frame, app: &App) {
 pub fn render_help(f: &mut Frame, app: &App) {
     let ctx = get_help_context(app);
     let title = context_title(ctx);
-    let keybindings = help_rows(ctx);
+    let keybindings = app.keymap.help_rows(ctx);
 
     // Calculate dimensions based on content
     let row_count = keybindings.len() as u16;
